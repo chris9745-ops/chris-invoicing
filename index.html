@@ -506,9 +506,9 @@ function downloadInvoicePDF(){
     doc.text('Subtotal', pageW-marginX-90, y); doc.text('$'+totalAmount.toFixed(2), pageW-marginX, y, {align:'right'});
     y+=15;
     doc.text('Tax Rate', pageW-marginX-90, y); doc.text('0.0%', pageW-marginX, y, {align:'right'});
-    y+=18;
+    y+=20;
     doc.setFont(undefined,'bold'); doc.setFontSize(13);
-    doc.text('TOTAL DUE', pageW-marginX-90, y); doc.text('$'+totalAmount.toFixed(2), pageW-marginX, y, {align:'right'});
+    doc.text('TOTAL DUE', pageW-marginX-170, y); doc.text('$'+totalAmount.toFixed(2), pageW-marginX, y, {align:'right'});
     y+=36;
 
     doc.setFont(undefined,'normal'); doc.setFontSize(9); doc.setTextColor(90,90,90);
