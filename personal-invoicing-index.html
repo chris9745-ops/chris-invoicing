@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Personal Time & Invoicing — Remedy Projects LLC</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+<style>
+  :root{
+    --navy:#0D4F82;--deep:#0A3A61;--teal:#0E7C86;--dark:#1E2D3D;--gray:#6B7280;
+    --lgray:#F3F4F6;--border:#D1D9E3;--gd:#166534;--gl:#DCFCE7;--rd:#991B1B;--rl:#FEE2E2;
+    --ad:#B45309;--al:#FEF3C7;--body:#374151;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#F7F9FB;color:var(--dark);}
+  .topbar{background:var(--deep);color:#fff;padding:14px 24px;display:flex;justify-content:space-between;align-items:center;}
+  .topbar .logo{font-weight:800;font-size:16px;}
+  .topbar .sub{font-size:11px;color:#ACCBF9;margin-left:10px;}
+  .btn{border:none;border-radius:6px;padding:7px 14px;font-size:12.5px;cursor:pointer;font-weight:600;}
+  .btn-p{background:var(--navy);color:#fff;}
+  .btn-s{background:#fff;color:var(--dark);border:1px solid var(--border);}
+  .btn-danger{background:#fff;color:var(--rd);border:1px solid var(--rd);}
+  .container{max-width:1100px;margin:0 auto;padding:24px;}
+  .panel{background:#fff;border:1px solid var(--border);border-radius:10px;padding:20px;margin-bottom:18px;}
+  .panel-title{font-size:15px;font-weight:700;margin-bottom:10px;}
+  .fg{display:flex;flex-direction:column;gap:4px;}
+  .fg label{font-size:11px;font-weight:600;color:var(--gray);text-transform:uppercase;letter-spacing:.03em;}
+  .fg input,.fg select{padding:7px 9px;border:1px solid var(--border);border-radius:6px;font-size:13px;}
+  .row{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th{text-align:left;font-size:10.5px;text-transform:uppercase;color:var(--gray);border-bottom:2px solid var(--border);padding:6px 8px;}
+  td{padding:6px 8px;border-bottom:1px solid var(--border);}
+  td.num{text-align:right;}
+  .editable{border:1px solid transparent;background:none;font-size:13px;padding:3px 5px;border-radius:4px;width:100%;}
+  .editable:hover,.editable:focus{border-color:var(--border);background:#fff;}
+  .stat-row{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px;}
+  .stat-card{background:var(--navy);color:#fff;border-radius:10px;padding:16px;}
+  .stat-card .v{font-size:26px;font-weight:800;}
+  .stat-card .l{font-size:11px;color:#ACCBF9;text-transform:uppercase;letter-spacing:.03em;margin-top:4px;}
+  .subtotal-row td{font-weight:700;background:var(--lgray);}
+  #authGate{position:fixed;inset:0;background:linear-gradient(135deg,#0A3A61,#1676B5);z-index:5000;display:flex;align-items:center;justify-content:center;padding:20px;}
+  #authGateBox{background:#fff;border-radius:12px;padding:32px;width:360px;max-width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3);}
+  .msg{font-size:11.5px;margin-top:6px;}
+  .hint{font-size:11px;color:var(--gray);margin-bottom:10px;}
+</style>
+</head>
+<body>
+
+<div id="authGate" style="display:flex">
+  <div id="authGateBox"></div>
+</div>
+
+<div class="topbar">
+  <div><span class="logo">Remedy Projects LLC</span><span class="sub">Personal Time &amp; Invoicing — Private</span></div>
+  <div style="display:flex;gap:8px;align-items:center">
+    <span id="saveInd" style="font-size:11px;color:#ACCBF9"></span>
+    <button class="btn btn-s" onclick="doSignOut()">Sign Out</button>
+  </div>
+</div>
+
+<div class="container" id="appRoot" style="display:none">
+
+  <div class="panel">
+    <div class="panel-title">Import Timesheet CSV</div>
+    <div class="hint">Upload your own QuickBooks Time export for the period. Safe to re-import — matching rows are updated, not duplicated.</div>
+    <input type="file" id="csvFile" accept=".csv" onchange="handleCSVUpload(event)">
+    <span id="importMsg" class="msg"></span>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title">Period</div>
+    <div class="row">
+      <div class="fg"><label>Month</label><input type="month" id="periodMonth" onchange="onPeriodChange()"></div>
+      <div class="fg"><label>Half</label>
+        <select id="periodHalf" onchange="onPeriodChange()">
+          <option value="1">1st – 15th</option>
+          <option value="2">16th – End of Month</option>
+        </select>
+      </div>
+      <div class="fg"><label>Period Covered</label><input type="text" id="periodLabel" readonly style="background:var(--lgray)"></div>
+    </div>
+  </div>
+
+  <div id="invoiceSection" style="display:none">
+    <div class="stat-row" id="statRow"></div>
+
+    <div class="panel">
+      <div class="panel-title">Client Engagements</div>
+      <div class="hint">Click any Engagement label to edit it before generating — this doesn't change your underlying time entries, just the invoice text.</div>
+      <table id="clientTable"></table>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">NimbusNow Internal</div>
+      <div class="hint">Grouped by Service Item. Rename any row (e.g. "Project Non-billable" → "Training") if that better reflects the work this period.</div>
+      <table id="internalTable"></table>
+    </div>
+
+    <div class="panel">
+      <div class="panel-title">Invoice Details</div>
+      <div class="row">
+        <div class="fg"><label>Invoice Number</label><input type="text" id="invNumber"></div>
+        <div class="fg"><label>Invoice Date</label><input type="date" id="invDate"></div>
+        <div class="fg"><label>Rate ($/hr)</label><input type="number" id="invRate" value="80" step="1"></div>
+      </div>
+      <div style="margin-top:14px;display:flex;gap:10px;align-items:center">
+        <button class="btn btn-p" onclick="downloadInvoicePDF()">⬇ Download Invoice PDF</button>
+        <button class="btn btn-s" onclick="saveInvoiceRecord()">💾 Save to History</button>
+        <span id="invoiceMsg" class="msg"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-title" style="cursor:pointer" onclick="toggleHistory()">▶ Invoice History</div>
+    <div id="historyBody" style="display:none;margin-top:10px"></div>
+  </div>
+
+</div>
+
+<script>
+/* ===================== CONFIG ===================== */
+// Only this email can ever access this tool or its data — enforced both here and in
+// Firestore rules, so even someone who guessed the URL and had an HMS dashboard login
+// couldn't see anything.
+const ALLOWED_EMAIL = 'c.langlais@nimbusnow.com';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDJW0526jOCtXvoP-AnzOiWJM7umyp3jg0",
+  authDomain: "nn-hms.firebaseapp.com",
+  projectId: "nn-hms",
+  storageBucket: "nn-hms.firebasestorage.app",
+  messagingSenderId: "998362339484",
+  appId: "1:998362339484:web:b2052755f7d03ff1627559"
+};
+
+let db = null, auth = null, firestoreOK = false;
+try{
+  firebase.initializeApp(firebaseConfig);
+  db = firebase.firestore();
+  auth = firebase.auth();
+  firestoreOK = true;
+} catch(e){ console.error('Firebase init failed:', e); }
+
+const COLLECTION = 'personal-invoicing-clanglais';
+
+/* ===================== AUTH ===================== */
+function esc(v){ return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function renderLogin(msg,isError){
+  document.getElementById('authGateBox').innerHTML = `
+    <div style="text-align:center;margin-bottom:18px">
+      <div style="font-weight:800;font-size:18px;color:#0A3A61">Remedy Projects LLC</div>
+      <div style="font-size:12px;color:#6B7280">Personal Time &amp; Invoicing — Sign In</div>
+    </div>
+    ${msg?`<div style="background:${isError?'#FEE2E2':'#DCFCE7'};color:${isError?'#991B1B':'#166534'};font-size:12px;padding:8px 10px;border-radius:6px;margin-bottom:12px">${esc(msg)}</div>`:''}
+    <div class="fg"><label>Email</label><input type="email" id="authEmail"></div>
+    <div class="fg" style="margin-top:8px"><label>Password</label><input type="password" id="authPassword"></div>
+    <button class="btn btn-p" style="width:100%;margin-top:14px;padding:9px" onclick="doSignIn()">Sign In</button>
+    <div style="text-align:center;margin-top:12px;font-size:12px">
+      <a href="#" onclick="doForgotPassword();return false;" style="color:#0D4F82">Forgot Password?</a>
+    </div>`;
+}
+function renderDenied(){
+  document.getElementById('authGateBox').innerHTML = `
+    <div style="text-align:center">
+      <div style="font-weight:800;font-size:18px;color:#991B1B;margin-bottom:8px">Access Restricted</div>
+      <div style="font-size:13px;color:#374151;margin-bottom:16px">This tool is private to a single account.</div>
+      <button class="btn btn-s" onclick="doSignOut()">Sign Out</button>
+    </div>`;
+}
+async function doSignIn(){
+  const email=(document.getElementById('authEmail').value||'').trim();
+  const password=document.getElementById('authPassword').value||'';
+  if(!email||!password){ renderLogin('Enter both email and password.',true); return; }
+  try{ await auth.signInWithEmailAndPassword(email,password); }
+  catch(e){ renderLogin(authErrorMessage(e),true); }
+}
+async function doForgotPassword(){
+  const email=(document.getElementById('authEmail')?.value||'').trim();
+  if(!email){ renderLogin('Enter your email above first, then click Forgot Password.',true); return; }
+  try{ await auth.sendPasswordResetEmail(email); renderLogin('Password reset email sent.',false); }
+  catch(e){ renderLogin(authErrorMessage(e),true); }
+}
+async function doSignOut(){ await auth.signOut(); }
+function authErrorMessage(e){
+  const map={'auth/user-not-found':'No account with that email.','auth/wrong-password':'Incorrect password.',
+    'auth/invalid-credential':'Incorrect email or password.','auth/invalid-email':'That email looks invalid.',
+    'auth/too-many-requests':'Too many attempts — wait a bit and try again.'};
+  return map[e.code]||e.message||'Something went wrong.';
+}
+
+auth.onAuthStateChanged(async function(user){
+  if(!user){ document.getElementById('authGate').style.display='flex'; document.getElementById('appRoot').style.display='none'; renderLogin(); return; }
+  if(user.email!==ALLOWED_EMAIL){
+    document.getElementById('authGate').style.display='flex'; document.getElementById('appRoot').style.display='none'; renderDenied(); return;
+  }
+  document.getElementById('authGate').style.display='none';
+  document.getElementById('appRoot').style.display='block';
+  await initApp();
+});
+
+/* ===================== DATA ===================== */
+let ENTRIES=[]; // {id, date, hours, account, engagement, serviceItem, customField, notes}
+let META={ lastInvoiceNumber: null };
+let appLoaded=false;
+
+function today(){ return new Date().toISOString().slice(0,10); }
+function fmt(d){ if(!d)return '—'; const dt=new Date(d+'T00:00:00'); return dt.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }
+
+async function initApp(){
+  if(appLoaded)return;
+  appLoaded=true;
+  setSaveInd('Loading...');
+  await loadEntries();
+  await loadMeta();
+  setSaveInd('');
+  const monthInput=document.getElementById('periodMonth');
+  const now=new Date();
+  monthInput.value=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  document.getElementById('invDate').value=today();
+  onPeriodChange();
+  renderHistory();
+}
+
+function setSaveInd(t){ document.getElementById('saveInd').textContent=t; }
+
+async function loadEntries(){
+  try{
+    const snap=await db.collection(COLLECTION).doc('entries').collection('items').get();
+    ENTRIES=snap.docs.map(d=>d.data());
+  } catch(e){ console.error('loadEntries failed:',e); ENTRIES=[]; }
+}
+async function persistEntries(newOrUpdated){
+  try{
+    const col=db.collection(COLLECTION).doc('entries').collection('items');
+    for(let i=0;i<newOrUpdated.length;i+=450){
+      const batch=db.batch();
+      newOrUpdated.slice(i,i+450).forEach(e=>{ batch.set(col.doc(e.id), e); });
+      await batch.commit();
+    }
+  } catch(e){ console.error('persistEntries failed:',e); }
+}
+async function loadMeta(){
+  try{
+    const doc=await db.collection(COLLECTION).doc('meta').get();
+    if(doc.exists) META=doc.data();
+  } catch(e){ console.error('loadMeta failed:',e); }
+}
+async function persistMeta(){
+  try{ await db.collection(COLLECTION).doc('meta').set(META); }
+  catch(e){ console.error('persistMeta failed:',e); }
+}
+
+/* ===================== CSV IMPORT ===================== */
+function rowId(r){
+  const raw=[r.local_date,r.jobcode_1,r.jobcode_2,r['service items'],r.hours,r.notes].join('|');
+  return raw.replace(/[\/\s]+/g,'-').slice(0,1400);
+}
+
+function handleCSVUpload(evt){
+  const file=evt.target.files[0];
+  const msg=document.getElementById('importMsg');
+  if(!file)return;
+  Papa.parse(file,{
+    header:true,
+    skipEmptyLines:true,
+    complete:async function(results){
+      try{
+        const byId={}; ENTRIES.forEach(e=>byId[e.id]=e);
+        let added=0, updated=0;
+        const toSave=[];
+        results.data.forEach(r=>{
+          const hours=parseFloat(r.hours);
+          if(!hours||hours<=0)return;
+          const id=rowId(r);
+          const entry={
+            id,
+            date:r.local_date,
+            hours,
+            account:(r.jobcode_1||'').trim(),
+            engagement:(r.jobcode_2||'').trim(),
+            serviceItem:(r['service items']||'').trim(),
+            customField:(r['custom field name']||'').trim(),
+            notes:r.notes||'',
+          };
+          if(byId[id]) updated++; else added++;
+          byId[id]=entry;
+          toSave.push(entry);
+        });
+        ENTRIES=Object.values(byId);
+        await persistEntries(toSave);
+        msg.style.color='var(--gd)';
+        msg.textContent=`✓ Imported: ${added} added, ${updated} updated.`;
+        onPeriodChange();
+      } catch(err){
+        msg.style.color='var(--rd)';
+        msg.textContent='Import failed: '+err.message;
+      } finally {
+        evt.target.value='';
+      }
+    },
+  });
+}
+
+/* ===================== PERIOD & INVOICE BUILD ===================== */
+let currentPeriodEntries=[];
+let clientRows=[];   // {account, label, hours}
+let internalRows=[]; // {label, hours}
+
+function onPeriodChange(){
+  const monthVal=document.getElementById('periodMonth').value; // YYYY-MM
+  const half=document.getElementById('periodHalf').value;
+  if(!monthVal)return;
+  const [y,m]=monthVal.split('-').map(Number);
+  let startDay, endDay, lastDayOfMonth=new Date(y,m,0).getDate();
+  if(half==='1'){ startDay=1; endDay=15; } else { startDay=16; endDay=lastDayOfMonth; }
+  const startStr=`${y}-${String(m).padStart(2,'0')}-${String(startDay).padStart(2,'0')}`;
+  const endStr=`${y}-${String(m).padStart(2,'0')}-${String(endDay).padStart(2,'0')}`;
+  document.getElementById('periodLabel').value=`${fmt(startStr)} – ${fmt(endStr)}`;
+
+  currentPeriodEntries=ENTRIES.filter(e=>e.date>=startStr && e.date<=endStr);
+  buildInvoiceRows();
+  renderInvoice();
+
+  window._periodStart=startStr; window._periodEnd=endStr;
+}
+
+function buildInvoiceRows(){
+  const clientMap={}, internalMap={};
+  currentPeriodEntries.forEach(e=>{
+    if(e.account==='Nimbus Now'){
+      const key=e.serviceItem||'(Unspecified)';
+      if(!internalMap[key]) internalMap[key]={label:key,hours:0};
+      internalMap[key].hours+=e.hours;
+    } else {
+      if(!clientMap[e.account]){
+        // default label = most common engagement text for this account this period
+        const engCounts={};
+        currentPeriodEntries.filter(x=>x.account===e.account).forEach(x=>{
+          const k=x.engagement||'(General)';
+          engCounts[k]=(engCounts[k]||0)+x.hours;
+        });
+        const topEng=Object.entries(engCounts).sort((a,b)=>b[1]-a[1])[0][0];
+        clientMap[e.account]={account:e.account,label:topEng,hours:0};
+      }
+      clientMap[e.account].hours+=e.hours;
+    }
+  });
+  clientRows=Object.values(clientMap).sort((a,b)=>a.account.localeCompare(b.account));
+  internalRows=Object.values(internalMap).sort((a,b)=>b.hours-a.hours);
+}
+
+function renderInvoice(){
+  const hasData=clientRows.length||internalRows.length;
+  document.getElementById('invoiceSection').style.display=hasData?'':'none';
+  if(!hasData)return;
+
+  const rate=parseFloat(document.getElementById('invRate').value)||80;
+  const clientHours=clientRows.reduce((s,r)=>s+r.hours,0);
+  const internalHours=internalRows.reduce((s,r)=>s+r.hours,0);
+  const totalHours=clientHours+internalHours;
+  const totalAmount=totalHours*rate;
+
+  document.getElementById('statRow').innerHTML=`
+    <div class="stat-card"><div class="v">${totalHours.toFixed(2)}</div><div class="l">Total Hours</div></div>
+    <div class="stat-card"><div class="v">${clientHours.toFixed(2)}</div><div class="l">Client Hours</div></div>
+    <div class="stat-card"><div class="v">${internalHours.toFixed(2)}</div><div class="l">NimbusNow Internal</div></div>
+    <div class="stat-card"><div class="v">$${totalAmount.toLocaleString(undefined,{minimumFractionDigits:2})}</div><div class="l">Invoice Total</div></div>
+  `;
+
+  document.getElementById('clientTable').innerHTML=`
+    <thead><tr><th>Account</th><th>Engagement</th><th class="num">Hours</th><th class="num">Rate</th><th class="num">Amount</th></tr></thead>
+    <tbody>
+      ${clientRows.map((r,i)=>`<tr>
+        <td>${esc(r.account)}</td>
+        <td><input class="editable" value="${esc(r.label)}" onchange="clientRows[${i}].label=this.value"></td>
+        <td class="num">${r.hours.toFixed(2)}</td>
+        <td class="num">$${rate.toFixed(2)}</td>
+        <td class="num">$${(r.hours*rate).toFixed(2)}</td>
+      </tr>`).join('')}
+      <tr class="subtotal-row"><td colspan="4">Client Engagements Subtotal</td><td class="num">$${(clientHours*rate).toFixed(2)}</td></tr>
+    </tbody>`;
+
+  document.getElementById('internalTable').innerHTML=`
+    <thead><tr><th>Engagement</th><th class="num">Hours</th><th class="num">Rate</th><th class="num">Amount</th></tr></thead>
+    <tbody>
+      ${internalRows.map((r,i)=>`<tr>
+        <td><input class="editable" value="${esc(r.label)}" onchange="internalRows[${i}].label=this.value"></td>
+        <td class="num">${r.hours.toFixed(2)}</td>
+        <td class="num">$${rate.toFixed(2)}</td>
+        <td class="num">$${(r.hours*rate).toFixed(2)}</td>
+      </tr>`).join('')}
+      <tr class="subtotal-row"><td colspan="3">NimbusNow Internal Subtotal</td><td class="num">$${(internalHours*rate).toFixed(2)}</td></tr>
+    </tbody>`;
+
+  const nextNum=META.lastInvoiceNumber?incrementInvoiceNumber(META.lastInvoiceNumber):'';
+  if(!document.getElementById('invNumber').value) document.getElementById('invNumber').value=nextNum;
+}
+
+function incrementInvoiceNumber(prev){
+  // e.g. "RP-26-10064" -> "RP-26-10065"
+  const m=prev.match(/^(.*?)(\d+)$/);
+  if(!m)return prev;
+  const num=(parseInt(m[2],10)+1).toString().padStart(m[2].length,'0');
+  return m[1]+num;
+}
+
+document.getElementById('invRate').addEventListener('input',renderInvoice);
+
+/* ===================== PDF GENERATION ===================== */
+function pdfSafe(s){
+  return String(s==null?'':s).replace(/[\u2018\u2019]/g,"'").replace(/[\u201C\u201D]/g,'"')
+    .replace(/[\u2013\u2014]/g,'-').replace(/\u2026/g,'...').replace(/[^\x00-\x7E]/g,'');
+}
+
+function downloadInvoicePDF(){
+  const msg=document.getElementById('invoiceMsg');
+  try{
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation:'portrait', unit:'pt', format:'letter' });
+    const pageW = doc.internal.pageSize.getWidth();
+    const marginX = 44;
+    let y = 50;
+
+    const rate=parseFloat(document.getElementById('invRate').value)||80;
+    const invNumber=document.getElementById('invNumber').value||'';
+    const invDate=document.getElementById('invDate').value||today();
+    const periodLabel=document.getElementById('periodLabel').value||'';
+    const clientHours=clientRows.reduce((s,r)=>s+r.hours,0);
+    const internalHours=internalRows.reduce((s,r)=>s+r.hours,0);
+    const totalHours=clientHours+internalHours;
+    const clientAmount=clientHours*rate, internalAmount=internalHours*rate, totalAmount=totalHours*rate;
+
+    doc.setFont(undefined,'bold'); doc.setFontSize(16); doc.setTextColor(13,79,130);
+    doc.text('REMEDY PROJECTS LLC', marginX, y);
+    doc.setFont(undefined,'bold'); doc.setFontSize(18); doc.setTextColor(0,0,0);
+    doc.text('INVOICE', pageW-marginX, y, {align:'right'});
+    y+=16;
+    doc.setFont(undefined,'normal'); doc.setFontSize(9); doc.setTextColor(90,90,90);
+    doc.text('1904 Cornwall Dr, North Huntingdon, PA 15642', marginX, y);
+    doc.text('#'+pdfSafe(invNumber), pageW-marginX, y, {align:'right'});
+    y+=13;
+    doc.text('719-640-9745 | Chris@remedyprojects.com', marginX, y);
+    doc.text('Period: '+pdfSafe(periodLabel), pageW-marginX, y, {align:'right'});
+    y+=28;
+
+    doc.setFont(undefined,'bold'); doc.setFontSize(9); doc.setTextColor(107,114,128);
+    doc.text('BILL TO', marginX, y);
+    doc.text('INVOICE DATE', pageW-marginX, y, {align:'right'});
+    y+=14;
+    doc.setFont(undefined,'bold'); doc.setFontSize(11); doc.setTextColor(0,0,0);
+    doc.text('NimbusNow LLC', marginX, y);
+    doc.setFont(undefined,'normal'); doc.setFontSize(10);
+    doc.text(pdfSafe(fmt(invDate)), pageW-marginX, y, {align:'right'});
+    y+=14;
+    doc.setFontSize(9); doc.setTextColor(90,90,90);
+    doc.text('Partner ITSM / Ingenuity / NimbusNow', marginX, y);
+    y+=26;
+
+    function sectionTable(title, rows, showAccountCol){
+      doc.setFont(undefined,'bold'); doc.setFontSize(10); doc.setTextColor(13,79,130);
+      doc.text(title, marginX, y); y+=14;
+
+      const cols = showAccountCol
+        ? [{l:'Account',w:150},{l:'Engagement',w:190},{l:'Hours',w:55,r:true},{l:'Rate',w:55,r:true},{l:'Amount',w:70,r:true}]
+        : [{l:'Engagement',w:340},{l:'Hours',w:55,r:true},{l:'Rate',w:55,r:true},{l:'Amount',w:70,r:true}];
+      const tableW = cols.reduce((s,c)=>s+c.w,0);
+
+      doc.setFillColor(13,79,130);
+      doc.rect(marginX, y-11, tableW, 16, 'F');
+      doc.setTextColor(255,255,255); doc.setFontSize(8.5); doc.setFont(undefined,'bold');
+      let x=marginX;
+      cols.forEach(c=>{ doc.text(c.l, c.r?x+c.w-4:x+4, y, c.r?{align:'right'}:{}); x+=c.w; });
+      doc.setTextColor(0,0,0); y+=16;
+
+      doc.setFont(undefined,'normal'); doc.setFontSize(9);
+      rows.forEach((r,i)=>{
+        if(i%2===1){ doc.setFillColor(243,244,246); doc.rect(marginX,y-9,tableW,15,'F'); }
+        x=marginX;
+        const vals = showAccountCol
+          ? [pdfSafe(r.account), pdfSafe(r.label), r.hours.toFixed(2), '$'+rate.toFixed(2), '$'+(r.hours*rate).toFixed(2)]
+          : [pdfSafe(r.label), r.hours.toFixed(2), '$'+rate.toFixed(2), '$'+(r.hours*rate).toFixed(2)];
+        cols.forEach((c,ci)=>{ doc.text(vals[ci], c.r?x+c.w-4:x+4, y, c.r?{align:'right'}:{}); x+=c.w; });
+        y+=15;
+      });
+      const subtotal = rows.reduce((s,r)=>s+r.hours*rate,0);
+      doc.setFont(undefined,'bold');
+      doc.setFillColor(229,231,235); doc.rect(marginX,y-9,tableW,16,'F');
+      doc.text(title+' Subtotal', marginX+4, y);
+      doc.text('$'+subtotal.toFixed(2), marginX+tableW-4, y, {align:'right'});
+      y+=26;
+    }
+
+    sectionTable('CLIENT ENGAGEMENTS', clientRows, true);
+    sectionTable('NIMBUSNOW INTERNAL', internalRows, false);
+
+    y+=6;
+    doc.setFont(undefined,'normal'); doc.setFontSize(10);
+    doc.text('Total Hours', pageW-marginX-90, y); doc.text(totalHours.toFixed(2), pageW-marginX, y, {align:'right'});
+    y+=15;
+    doc.text('Subtotal', pageW-marginX-90, y); doc.text('$'+totalAmount.toFixed(2), pageW-marginX, y, {align:'right'});
+    y+=15;
+    doc.text('Tax Rate', pageW-marginX-90, y); doc.text('0.0%', pageW-marginX, y, {align:'right'});
+    y+=18;
+    doc.setFont(undefined,'bold'); doc.setFontSize(13);
+    doc.text('TOTAL DUE', pageW-marginX-90, y); doc.text('$'+totalAmount.toFixed(2), pageW-marginX, y, {align:'right'});
+    y+=36;
+
+    doc.setFont(undefined,'normal'); doc.setFontSize(9); doc.setTextColor(90,90,90);
+    doc.text('Questions: Chris Langlais / Jill Langlais | 719-640-9745', marginX, y); y+=13;
+    doc.text('Chris@remedyprojects.com / Jill@remedyprojects.com', marginX, y); y+=24;
+    doc.setFont(undefined,'bold'); doc.setFontSize(10); doc.setTextColor(13,79,130);
+    doc.text('THANK YOU FOR YOUR BUSINESS!', marginX, y);
+
+    // Page 2: Time Summary
+    doc.addPage();
+    y=50;
+    doc.setFont(undefined,'bold'); doc.setFontSize(15); doc.setTextColor(13,79,130);
+    doc.text('TIME SUMMARY — '+pdfSafe(periodLabel), marginX, y); y+=16;
+    doc.setFont(undefined,'normal'); doc.setFontSize(9); doc.setTextColor(90,90,90);
+    doc.text('Remedy Projects LLC | Chris Langlais | Bi-Monthly Period', marginX, y); y+=30;
+
+    const statW=(pageW-marginX*2-30)/4;
+    const stats=[['Total Hours',totalHours.toFixed(2)],['Client Hours',clientHours.toFixed(2)],['NimbusNow Internal',internalHours.toFixed(2)],['Invoice Total','$'+totalAmount.toFixed(2)]];
+    stats.forEach((s,i)=>{
+      const x=marginX+i*(statW+10);
+      doc.setFont(undefined,'normal'); doc.setFontSize(8.5); doc.setTextColor(107,114,128);
+      doc.text(s[0], x, y);
+      doc.setFont(undefined,'bold'); doc.setFontSize(20); doc.setTextColor(13,79,130);
+      doc.text(String(s[1]), x, y+22);
+    });
+    y+=60;
+
+    doc.setFont(undefined,'bold'); doc.setFontSize(11); doc.setTextColor(0,0,0);
+    doc.text('HOURS BY ACCOUNT', marginX, y); y+=20;
+
+    const allRows=[...clientRows.map(r=>({label:r.account,hours:r.hours,client:true})),
+                    ...internalRows.map(r=>({label:'NimbusNow - '+r.label,hours:r.hours,client:false}))]
+                    .sort((a,b)=>b.hours-a.hours);
+    const maxHrs=Math.max(...allRows.map(r=>r.hours),1);
+    const barMaxW=pageW-marginX*2-160;
+    allRows.forEach(r=>{
+      doc.setFont(undefined,'normal'); doc.setFontSize(9); doc.setTextColor(0,0,0);
+      doc.text(pdfSafe(r.label), marginX, y+9);
+      const barW=(r.hours/maxHrs)*barMaxW;
+      doc.setFillColor(r.client?14:130, r.client?124:150, r.client?134:170);
+      doc.rect(marginX+150, y, barW, 12, 'F');
+      doc.text(r.hours.toFixed(2), marginX+150+barW+6, y+9);
+      y+=20;
+    });
+
+    doc.save(`Invoice-${invNumber}.pdf`);
+    msg.style.color='var(--gd)';
+    msg.textContent='✓ PDF downloaded.';
+  } catch(err){
+    console.error('Invoice PDF generation failed:',err);
+    msg.style.color='var(--rd)';
+    msg.textContent='PDF generation failed: '+err.message;
+  }
+}
+
+/* ===================== SAVE / HISTORY ===================== */
+async function saveInvoiceRecord(){
+  const msg=document.getElementById('invoiceMsg');
+  const invNumber=document.getElementById('invNumber').value||'';
+  const invDate=document.getElementById('invDate').value||today();
+  const rate=parseFloat(document.getElementById('invRate').value)||80;
+  const clientHours=clientRows.reduce((s,r)=>s+r.hours,0);
+  const internalHours=internalRows.reduce((s,r)=>s+r.hours,0);
+  const totalHours=clientHours+internalHours;
+  const record={
+    invoiceNumber:invNumber, invoiceDate:invDate, rate,
+    periodStart:window._periodStart, periodEnd:window._periodEnd,
+    clientRows:JSON.parse(JSON.stringify(clientRows)),
+    internalRows:JSON.parse(JSON.stringify(internalRows)),
+    totalHours, totalAmount: totalHours*rate,
+    savedAt: new Date().toISOString(),
+  };
+  try{
+    await db.collection(COLLECTION).doc('invoices').collection('items').doc(invNumber).set(record);
+    META.lastInvoiceNumber=invNumber;
+    await persistMeta();
+    msg.style.color='var(--gd)';
+    msg.textContent='✓ Saved to history.';
+    renderHistory();
+  } catch(e){
+    msg.style.color='var(--rd)';
+    msg.textContent='Save failed: '+e.message;
+  }
+}
+
+function toggleHistory(){
+  const body=document.getElementById('historyBody');
+  const isOpen=body.style.display!=='none';
+  body.style.display=isOpen?'none':'block';
+}
+
+async function renderHistory(){
+  const body=document.getElementById('historyBody');
+  try{
+    const snap=await db.collection(COLLECTION).doc('invoices').collection('items').orderBy('savedAt','desc').limit(20).get();
+    const records=snap.docs.map(d=>d.data());
+    body.innerHTML=records.length?`<table><thead><tr><th>Invoice #</th><th>Period</th><th class="num">Hours</th><th class="num">Amount</th><th>Date</th></tr></thead>
+      <tbody>${records.map(r=>`<tr>
+        <td>${esc(r.invoiceNumber)}</td>
+        <td>${esc(fmt(r.periodStart))} – ${esc(fmt(r.periodEnd))}</td>
+        <td class="num">${r.totalHours.toFixed(2)}</td>
+        <td class="num">$${r.totalAmount.toFixed(2)}</td>
+        <td>${esc(fmt(r.invoiceDate))}</td>
+      </tr>`).join('')}</tbody></table>`
+      : '<div style="font-size:12px;color:var(--gray);font-style:italic">No saved invoices yet.</div>';
+  } catch(e){
+    body.innerHTML = `<div style="color:var(--rd);font-size:12px">Could not load history: ${esc(e.message)}</div>`;
+  }
+}
+</script>
+</body>
+</html>
